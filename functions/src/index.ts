@@ -6,10 +6,6 @@ import * as corsLib from "cors";
 admin.initializeApp();
 const cors = corsLib.default({ origin: true });
 
-interface ExpandedInvoice extends Stripe.Invoice {
-  payment_intent: Stripe.PaymentIntent;
-}
-
 const stripeSecret = `${process.env.STRIPE_API_SECRET_KEY_TEST}`;
 
 const stripe = new Stripe(stripeSecret);
@@ -90,9 +86,77 @@ exports.getProducts = functions.https.onRequest((req, res) => {
   });
 });
 
+// SETUP PAYMENT INTENT TO GET CLIENT SECRET AND SAVE CUSTOMER DEFAULT PAYMENT METHOD
+exports.getClientSecret = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== "POST") {
+      return res.status(405).send("Method Not Allowed");
+    }
+
+    const { customerId } = req.body as {
+      customerId: string;
+    };
+
+    try {
+      const setupIntent = await stripe.setupIntents.create({
+        customer: customerId,
+      });
+
+      console.log(setupIntent);
+
+      return res.status(200).json({
+        clientSecret: setupIntent.client_secret,
+      });
+    } catch (error) {
+      console.error("Error creating subscription:", error);
+      return res.status(500).send(JSON.stringify(error));
+    }
+  });
+});
+
+exports.attachDefaultPaymentMethod = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    const { customerId } = req.body as {
+      customerId: string;
+    };
+
+    if (!customerId) {
+      return res.status(400).send("customerId is required");
+    }
+
+    try {
+      // List all payment methods for the customer
+      const paymentMethods = await stripe.paymentMethods.list({
+        customer: customerId,
+        type: "card",
+      });
+
+      if (!paymentMethods.data.length) {
+        throw new Error("No payment method found.");
+      }
+
+      const defaultPaymentMethod = paymentMethods.data[0].id;
+
+      // Set it as the default for invoices/subscriptions
+      await stripe.customers.update(customerId, {
+        invoice_settings: {
+          default_payment_method: defaultPaymentMethod,
+        },
+      });
+
+      return res.status(200).json({
+        defaultPaymentMethod,
+      });
+    } catch (error) {
+      console.error("Error setting default payment method:", error);
+      return res.status(500).send(JSON.stringify(error));
+    }
+  });
+});
+
 // POST /createSubscriptionPaymentSheet - Create a subscription based on the product
 // OBS:  The user must have a default payment method set up in Stripe
-export const createSubscriptionPaymentSheet = functions.https.onRequest(
+exports.createSubscriptionPaymentSheet = functions.https.onRequest(
   (req, res) => {
     cors(req, res, async () => {
       if (req.method !== "POST") {
@@ -109,13 +173,6 @@ export const createSubscriptionPaymentSheet = functions.https.onRequest(
       }
 
       try {
-        // 1. Create ephemeral key
-        const ephemeralKey = await stripe.ephemeralKeys.create(
-          { customer: customerId },
-          { apiVersion: "2023-10-16" }
-        );
-
-        // 2. Create subscription
         const subscription = await stripe.subscriptions.create({
           customer: customerId,
           items: [{ price: priceId }],
@@ -126,23 +183,13 @@ export const createSubscriptionPaymentSheet = functions.https.onRequest(
           expand: ["latest_invoice.payment_intent"],
         });
 
-        const latestInvoice = subscription.latest_invoice;
-
-        if (typeof latestInvoice === "string") {
-          return res.status(500).send("Unexpected invoice format");
-        }
-
-        const paymentIntent = (latestInvoice as ExpandedInvoice).payment_intent;
-
         return res.status(200).json({
-          clientSecret: paymentIntent.client_secret,
-          ephemeralKey: ephemeralKey.secret,
           customerId: customerId,
           subscriptionId: subscription.id,
         });
       } catch (error) {
         console.error("Error creating subscription:", error);
-        return res.status(500).send("Internal Server Error");
+        return res.status(500).send(JSON.stringify(error));
       }
     });
   }
