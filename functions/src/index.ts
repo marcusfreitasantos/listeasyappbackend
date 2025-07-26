@@ -71,6 +71,7 @@ exports.getProducts = functions.https.onRequest((req, res) => {
         return {
           productId: product.id,
           name: product.name,
+          description: product.description,
           priceId: price.id,
           amount: price.unit_amount,
           currency: price.currency,
