@@ -195,3 +195,30 @@ exports.createSubscriptionPaymentSheet = functions.https.onRequest(
     });
   }
 );
+
+exports.cancelSubscription = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== "POST") {
+      return res.status(405).send("Method Not Allowed");
+    }
+
+    const { subscriptionId } = req.body as {
+      subscriptionId: string;
+    };
+
+    if (!subscriptionId) return res.status(400).send("Missing subscriptionId");
+
+    try {
+      const subscription = await stripe.subscriptions.cancel(subscriptionId);
+
+      return res.status(200).json({
+        customerId: subscription.customer,
+        subscriptionId: subscription.id,
+        subscriptionStatus: subscription.status,
+      });
+    } catch (error) {
+      console.error("Error creating subscription:", error);
+      return res.status(500).send(JSON.stringify(error));
+    }
+  });
+});
