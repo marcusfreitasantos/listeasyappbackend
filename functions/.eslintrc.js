@@ -28,5 +28,6 @@ module.exports = {
     indent: ["error", 2],
     "object-curly-spacing": [2, "always"],
     "max-len": ["error", { code: 120 }],
+    "operator-linebreak": "off",
   },
 };

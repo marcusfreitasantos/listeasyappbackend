@@ -6,7 +6,10 @@ import * as corsLib from "cors";
 admin.initializeApp();
 const cors = corsLib.default({ origin: true });
 
-const stripeSecret = `${process.env.STRIPE_API_SECRET_KEY_TEST}`;
+const stripeSecret =
+  process.env.NODE_ENV === "development"
+    ? `${process.env.STRIPE_API_SECRET_KEY_TEST}`
+    : `${process.env.STRIPE_API_SECRET_KEY_PROD}`;
 
 const stripe = new Stripe(stripeSecret);
 
@@ -218,6 +221,40 @@ exports.cancelSubscription = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error("Error creating subscription:", error);
+      return res.status(500).send(JSON.stringify(error));
+    }
+  });
+});
+
+exports.switchUserSubscription = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const { subscriptionId, newPriceId } = req.body;
+
+    if (!subscriptionId || !newPriceId) {
+      return res.status(400).send("Missing subscriptionId or priceId");
+    }
+
+    try {
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+      const updated = await stripe.subscriptions.update(subscriptionId, {
+        cancel_at_period_end: true,
+        proration_behavior: "create_prorations",
+        items: [
+          {
+            id: subscription.items.data[0].id,
+            price: newPriceId,
+          },
+        ],
+      });
+
+      return res.status(200).json({
+        message: "Subscription updated",
+        subscription: updated,
+        subscriptionStatus: updated.status,
+      });
+    } catch (error) {
+      console.error("Failed to switch plan", error);
       return res.status(500).send(JSON.stringify(error));
     }
   });
