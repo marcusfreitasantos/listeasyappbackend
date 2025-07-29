@@ -4,6 +4,17 @@ import Stripe from "stripe";
 import * as corsLib from "cors";
 
 admin.initializeApp();
+const db = admin.firestore();
+
+type SubscriptionFirestoreDocType = {
+  stripeCustomerId: string;
+  userName: string;
+  userId: string;
+  stripeSubscriptionId: string;
+  productId: string;
+  stripeSubscriptionStatus: string;
+};
+
 const cors = corsLib.default({ origin: true });
 
 const stripeSecret =
@@ -255,6 +266,55 @@ exports.switchUserSubscription = functions.https.onRequest(async (req, res) => {
       });
     } catch (error) {
       console.error("Failed to switch plan", error);
+      return res.status(500).send(JSON.stringify(error));
+    }
+  });
+});
+
+const updateSubscriptionStatusInFirestore = async (
+  subscriptionId: string,
+  subscriptionStatus: string
+) => {
+  const subscriptionsCollection = db.collection("Subscriptions");
+  const subscriptionDoc = await subscriptionsCollection
+    .where("stripeSubscriptionId", "==", subscriptionId)
+    .get();
+
+  if (subscriptionDoc.empty) {
+    return "No matching documents.";
+  }
+
+  let subscriptionData: SubscriptionFirestoreDocType | object = {};
+
+  subscriptionDoc.forEach((doc) => {
+    subscriptionsCollection.doc(doc.id).update({
+      stripeSubscriptionStatus: subscriptionStatus,
+    });
+    subscriptionData = {
+      ...doc.data(),
+      stripeSubscriptionStatus: subscriptionStatus,
+    };
+  });
+
+  return subscriptionData;
+};
+
+exports.stripeWebhook = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    try {
+      const getSubscriptionInFirestore =
+        await updateSubscriptionStatusInFirestore(
+          req.body.data.object.id,
+          req.body.data.object.status
+        );
+
+      if (getSubscriptionInFirestore) {
+        return res.status(200).json(getSubscriptionInFirestore);
+      } else {
+        throw new Error("Subscription not found in database.");
+      }
+    } catch (error) {
+      console.log(error);
       return res.status(500).send(JSON.stringify(error));
     }
   });
