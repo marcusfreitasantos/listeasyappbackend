@@ -81,5 +81,6 @@ typings/
 
 # Google services json
 google-services.json
+google-cloud-service-key.json
 
 lib/*
