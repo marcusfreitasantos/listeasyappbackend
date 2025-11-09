@@ -134,7 +134,7 @@ exports.handlePlaySubscriptions = onMessagePublished(
         );
       }
 
-      if (subscriptionType === 3) {
+      if (subscriptionType === 3 || subscriptionType === 7) {
         const purchaseToken = subscriptionNotification.purchaseToken;
 
         if (!purchaseToken) throw new Error("Invalid purchaseToken.");
