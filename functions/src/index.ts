@@ -67,6 +67,8 @@ const subscriptionNotificationTypes = [
   { 22: "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED" },
 ];
 
+const activeStatus = [2, 4, 6, 7, 13, 19];
+
 const updateSubscriptionStatusInFirestore = async (
   purchaseToken: string,
   subscriptionStatus: string
@@ -98,8 +100,6 @@ const updateSubscriptionStatusInFirestore = async (
 const setSubscriptionStatusBasedOnNotificationType = (
   notificationType: number
 ) => {
-  const activeStatus = [1, 2, 4, 6, 7];
-
   if (activeStatus.includes(notificationType)) {
     return "active";
   } else {
@@ -134,11 +134,7 @@ exports.handlePlaySubscriptions = onMessagePublished(
         );
       }
 
-      const subscriptionTypesToIgnore = [4, 8, 13, 19];
-
-      if (subscriptionTypesToIgnore.includes(subscriptionType)) {
-        functions.logger.info("Subscription successfully purchased from app.");
-      } else {
+      if (subscriptionType === 3) {
         const purchaseToken = subscriptionNotification.purchaseToken;
 
         if (!purchaseToken) throw new Error("Invalid purchaseToken.");
