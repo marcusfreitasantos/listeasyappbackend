@@ -4,6 +4,7 @@ import { onMessagePublished } from "firebase-functions/v2/pubsub";
 import * as admin from "firebase-admin";
 import * as corsLib from "cors";
 import { google } from "googleapis";
+import { FirebaseAuthError } from "firebase-admin/auth";
 
 admin.initializeApp();
 setGlobalOptions({ maxInstances: 10 });
@@ -202,3 +203,43 @@ exports.validatePurchaseTokenFromGooglePlay = functions.https.onRequest(
     });
   }
 );
+
+exports.getUserByEmailInFirebaseAuth = functions.https.onRequest((req, res) => {
+  return cors(req, res, async () => {
+    try {
+      if (req.method !== "GET") {
+        return res.status(405).send("Method Not Allowed");
+      }
+
+      const headerKey = req.headers["x-api-key"] as string;
+
+      if (headerKey !== process.env.API_KEY) {
+        return res.status(401).send("Unathorized");
+      }
+
+      const { user_email } = req.query as {
+        user_email: string;
+      };
+      const user = await admin.auth().getUserByEmail(user_email);
+
+      return res.status(200).json({
+        uid: user.uid,
+        displayName: user.displayName,
+        email: user.email,
+      });
+    } catch (err) {
+      console.log(err);
+      if (
+        err instanceof FirebaseAuthError &&
+        err.code === "auth/user-not-found"
+      ) {
+        return res
+          .status(404)
+          .send(
+            "There is no user record corresponding to the provided identifier."
+          );
+      }
+      return res.status(500).send("Internal Server Error");
+    }
+  });
+});
