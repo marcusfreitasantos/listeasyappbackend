@@ -70,14 +70,30 @@ const subscriptionNotificationTypes = [
 
 const activeStatus = [2, 4, 6, 7, 13, 19];
 
+const getCollectionData = async (
+  collection: FirebaseFirestore.CollectionReference,
+  key: string,
+  value: any,
+): Promise<FirebaseFirestore.QuerySnapshot> => {
+  try {
+    const collectionDoc = await collection.where(key, "==", value).get();
+
+    return collectionDoc;
+  } catch (err) {
+    throw new Error("Error checking collection data: " + err);
+  }
+};
+
 const updateSubscriptionStatusInFirestore = async (
   purchaseToken: string,
-  subscriptionStatus: string
+  subscriptionStatus: string,
 ): Promise<SubscriptionFirestoreDocType | object> => {
   const subscriptionsCollection = db.collection("Subscriptions");
-  const subscriptionDoc = await subscriptionsCollection
-    .where("purchaseToken", "==", purchaseToken)
-    .get();
+  const subscriptionDoc = await getCollectionData(
+    subscriptionsCollection,
+    "purchaseToken",
+    purchaseToken,
+  );
 
   if (subscriptionDoc.empty) {
     return {};
@@ -99,7 +115,7 @@ const updateSubscriptionStatusInFirestore = async (
 };
 
 const setSubscriptionStatusBasedOnNotificationType = (
-  notificationType: number
+  notificationType: number,
 ) => {
   if (activeStatus.includes(notificationType)) {
     return "active";
@@ -131,7 +147,7 @@ exports.handlePlaySubscriptions = onMessagePublished(
 
       if (!isValidNotificationType) {
         throw new Error(
-          `This notification type: [${subscriptionType}] is not supported `
+          `This notification type: [${subscriptionType}] is not supported `,
         );
       }
 
@@ -142,12 +158,12 @@ exports.handlePlaySubscriptions = onMessagePublished(
 
         subscriptionUpdatedStatus =
           setSubscriptionStatusBasedOnNotificationType(
-            subscriptionNotification.notificationType
+            subscriptionNotification.notificationType,
           );
 
         const updatedSubscription = (await updateSubscriptionStatusInFirestore(
           purchaseToken,
-          subscriptionUpdatedStatus
+          subscriptionUpdatedStatus,
         )) as SubscriptionFirestoreDocType;
 
         if (!updatedSubscription.id) {
@@ -156,13 +172,13 @@ exports.handlePlaySubscriptions = onMessagePublished(
 
         functions.logger.info(
           "Subscription updated successfully.",
-          JSON.stringify(updatedSubscription)
+          JSON.stringify(updatedSubscription),
         );
       }
     } catch (e) {
       functions.logger.error("PubSub message was not processed!", e);
     }
-  }
+  },
 );
 
 exports.validatePurchaseTokenFromGooglePlay = functions.https.onRequest(
@@ -201,7 +217,7 @@ exports.validatePurchaseTokenFromGooglePlay = functions.https.onRequest(
         return res.status(500).send("Internal Server Error");
       }
     });
-  }
+  },
 );
 
 exports.getUserByEmailInFirebaseAuth = functions.https.onRequest((req, res) => {
@@ -236,7 +252,118 @@ exports.getUserByEmailInFirebaseAuth = functions.https.onRequest((req, res) => {
         return res
           .status(404)
           .send(
-            "There is no user record corresponding to the provided identifier."
+            "There is no user record corresponding to the provided identifier.",
+          );
+      }
+      return res.status(500).send("Internal Server Error");
+    }
+  });
+});
+
+const removeAllUserListsFromFirestore = async (
+  userId: string,
+): Promise<{ status: string; message: string }> => {
+  const listsCollection: FirebaseFirestore.CollectionReference =
+    db.collection("Lists");
+  const listsCollectionDoc: FirebaseFirestore.QuerySnapshot =
+    await getCollectionData(listsCollection, "authorId", userId);
+
+  if (listsCollectionDoc.empty) {
+    return {
+      status: "error",
+      message: `No lists found for user: ${userId}`,
+    };
+  }
+
+  await Promise.all(
+    listsCollectionDoc.docs.map(async (doc) => {
+      await listsCollection.doc(doc.id).delete();
+    }),
+  );
+
+  return {
+    status: "success",
+    message: `All lists removed for user: ${userId}`,
+  };
+};
+
+const removeAllUserInvitesFromFirestore = async (
+  userId: string,
+): Promise<{ status: string; message: string }> => {
+  const invitesCollection: FirebaseFirestore.CollectionReference =
+    db.collection("Invites");
+  const invitesCollectionDoc: FirebaseFirestore.QuerySnapshot =
+    await getCollectionData(invitesCollection, "referralUserId", userId);
+
+  if (invitesCollectionDoc.empty) {
+    return {
+      status: "error",
+      message: `No invites found for user: ${userId}`,
+    };
+  }
+
+  await Promise.all(
+    invitesCollectionDoc.docs.map(async (doc) => {
+      await invitesCollection.doc(doc.id).delete();
+    }),
+  );
+
+  return {
+    status: "success",
+    message: `All invites removed for user: ${userId}`,
+  };
+};
+
+exports.deleteUserData = functions.https.onRequest((req, res) => {
+  return cors(req, res, async () => {
+    try {
+      if (req.method !== "POST") {
+        return res.status(405).send("Method Not Allowed");
+      }
+
+      const headerKey = req.headers["x-api-key"] as string;
+
+      if (headerKey !== process.env.API_KEY) {
+        return res.status(401).send("Unathorized");
+      }
+
+      const { userId, purchaseToken } = req.body as {
+        userId: string;
+        purchaseToken: string;
+      };
+
+      //GET USER
+      const user = await admin.auth().getUser(userId);
+
+      //DEACTIVATE SUBSCRIPTION
+      const updatedSubscription: SubscriptionFirestoreDocType | object = ({} =
+        await updateSubscriptionStatusInFirestore(purchaseToken, "inactive"));
+
+      //REMOVE ALL LISTS
+      await removeAllUserListsFromFirestore(userId);
+
+      //REMOVE ALL INVITES
+      await removeAllUserInvitesFromFirestore(userId);
+
+      //REMOVE USER ACCOUNT
+
+      return res.status(200).json({
+        uid: user.uid,
+        displayName: user.displayName,
+        email: user.email,
+        updatedSubscription,
+        message: "User data deletion request received.",
+      });
+    } catch (err) {
+      console.log(err);
+      if (
+        err instanceof FirebaseAuthError &&
+        err.code === "auth/user-not-found"
+      ) {
+        return res
+          .status(404)
+          .send(
+            "There is no user record corresponding to the provided identifier.",
           );
       }
       return res.status(500).send("Internal Server Error");
