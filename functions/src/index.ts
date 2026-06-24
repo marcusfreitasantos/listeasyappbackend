@@ -73,7 +73,7 @@ const activeStatus = [2, 4, 6, 7, 13, 19];
 const getCollectionData = async (
   collection: FirebaseFirestore.CollectionReference,
   key: string,
-  value: any,
+  value: string,
 ): Promise<FirebaseFirestore.QuerySnapshot> => {
   try {
     const collectionDoc = await collection.where(key, "==", value).get();
@@ -332,20 +332,16 @@ exports.deleteUserData = functions.https.onRequest((req, res) => {
         purchaseToken: string;
       };
 
-      //GET USER
       const user = await admin.auth().getUser(userId);
 
-      //DEACTIVATE SUBSCRIPTION
-      const updatedSubscription: SubscriptionFirestoreDocType | object = ({} =
-        await updateSubscriptionStatusInFirestore(purchaseToken, "inactive"));
+      const updatedSubscription: SubscriptionFirestoreDocType | object =
+        await updateSubscriptionStatusInFirestore(purchaseToken, "inactive");
 
-      //REMOVE ALL LISTS
       await removeAllUserListsFromFirestore(userId);
 
-      //REMOVE ALL INVITES
       await removeAllUserInvitesFromFirestore(userId);
 
-      //REMOVE USER ACCOUNT
+      await admin.auth().deleteUser(userId);
 
       return res.status(200).json({
         uid: user.uid,
