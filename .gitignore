@@ -84,3 +84,6 @@ google-services.json
 google-cloud-service-key.json
 
 lib/*
+
+# APP Store files
+*.p8

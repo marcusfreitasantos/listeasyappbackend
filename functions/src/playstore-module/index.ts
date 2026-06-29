@@ -2,7 +2,7 @@ import * as functions from "firebase-functions";
 import { onMessagePublished } from "firebase-functions/v2/pubsub";
 import * as corsLib from "cors";
 import { google } from "googleapis";
-import { updateSubscriptionStatusInFirestore } from "../user-module/index.js";
+import { updateSubscriptionStatusInFirestore } from "../user-module";
 
 const cors = corsLib.default({
   origin: true,
@@ -74,7 +74,7 @@ const setSubscriptionStatusBasedOnNotificationType = (
   }
 };
 
-export const handlePlaySubscriptions = onMessagePublished(
+exports.handlePlaySubscriptions = onMessagePublished(
   "subscriptions",
   async (event) => {
     try {
@@ -131,7 +131,7 @@ export const handlePlaySubscriptions = onMessagePublished(
   },
 );
 
-export const validatePurchaseTokenFromGooglePlay = functions.https.onRequest(
+exports.validatePurchaseTokenFromGooglePlay = functions.https.onRequest(
   (req, res) => {
     return cors(req, res, async () => {
       try {
