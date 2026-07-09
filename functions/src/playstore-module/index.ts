@@ -1,4 +1,5 @@
-import * as functions from "firebase-functions";
+import { logger } from "firebase-functions/v2";
+import { onRequest } from "firebase-functions/v2/https";
 import { onMessagePublished } from "firebase-functions/v2/pubsub";
 import * as corsLib from "cors";
 import { google } from "googleapis";
@@ -74,14 +75,14 @@ const setSubscriptionStatusBasedOnNotificationType = (
   }
 };
 
-exports.handlePlaySubscriptions = onMessagePublished(
+export const handlePlaySubscriptions = onMessagePublished(
   "subscriptions",
   async (event) => {
     try {
       let subscriptionUpdatedStatus = "";
       const json = event.data?.message?.json ?? event.data;
 
-      functions.logger.info("Pub/Sub message received", json);
+      logger.info("Pub/Sub message received", json);
 
       const subscriptionNotification: SubscriptionNotification =
         json.subscriptionNotification;
@@ -120,23 +121,30 @@ exports.handlePlaySubscriptions = onMessagePublished(
           throw new Error("Subscription not updated.");
         }
 
-        functions.logger.info(
+        logger.info(
           "Subscription updated successfully.",
           JSON.stringify(updatedSubscription),
         );
       }
     } catch (e) {
-      functions.logger.error("PubSub message was not processed!", e);
+      logger.error("PubSub message was not processed!", e);
     }
   },
 );
 
-exports.validatePurchaseTokenFromGooglePlay = functions.https.onRequest(
+export const validatePurchaseTokenFromGooglePlay = onRequest(
+  { cors: true, invoker: "public" },
   (req, res) => {
     return cors(req, res, async () => {
       try {
         if (req.method !== "POST") {
           return res.status(405).send("Method Not Allowed");
+        }
+
+        const headerKey = req.headers["x-api-key"] as string;
+
+        if (headerKey !== process.env.API_KEY) {
+          return res.status(401).send("Unathorized");
         }
 
         const { purchaseToken } = req.body as {
@@ -163,7 +171,7 @@ exports.validatePurchaseTokenFromGooglePlay = functions.https.onRequest(
           purchaseData,
         });
       } catch (err) {
-        console.error("Failed purchase token validation:", err);
+        logger.error("Failed purchase token validation:", err);
         return res.status(500).send("Internal Server Error");
       }
     });

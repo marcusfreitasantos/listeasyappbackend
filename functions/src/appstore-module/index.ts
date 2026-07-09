@@ -1,6 +1,6 @@
 import * as crypto from "crypto";
-import * as functions from "firebase-functions";
 import * as corsLib from "cors";
+import { onRequest } from "firebase-functions/v2/https";
 
 import {
   AppStoreServerAPIClient,
@@ -104,157 +104,167 @@ const cors = corsLib.default({
   optionsSuccessStatus: 200,
 });
 
-exports.validatePurchaseFromAppStore = functions.https.onRequest((req, res) => {
-  return cors(req, res, async () => {
-    try {
-      if (req.method !== "POST") {
-        return res.status(405).send("Method Not Allowed");
-      }
+export const validatePurchaseFromAppStore = onRequest(
+  { cors: true, invoker: "public" },
+  (req, res) => {
+    return cors(req, res, async () => {
+      try {
+        if (req.method !== "POST") {
+          return res.status(405).send("Method Not Allowed");
+        }
 
-      const { transactionId, purchaseToken } = req.body as {
-        transactionId?: string;
-        purchaseToken?: string;
-      };
+        const headerKey = req.headers["x-api-key"] as string;
 
-      if (!transactionId && !purchaseToken) {
-        return res.status(400).json({
-          isValid: false,
-          message: "Missing transactionId or purchaseToken.",
-        });
-      }
+        if (headerKey !== process.env.API_KEY) {
+          return res.status(401).send("Unathorized");
+        }
 
-      if (purchaseToken) {
-        const tokenVerifier =
-          isXcodePurchaseToken(purchaseToken) && !verifier
-            ? createVerifier(Environment.XCODE)
-            : isXcodePurchaseToken(purchaseToken)
+        const { transactionId, purchaseToken } = req.body as {
+          transactionId?: string;
+          purchaseToken?: string;
+        };
+
+        if (!transactionId && !purchaseToken) {
+          return res.status(400).json({
+            isValid: false,
+            message: "Missing transactionId or purchaseToken.",
+          });
+        }
+
+        if (purchaseToken) {
+          const tokenVerifier =
+            isXcodePurchaseToken(purchaseToken) && !verifier
               ? createVerifier(Environment.XCODE)
-              : verifier;
+              : isXcodePurchaseToken(purchaseToken)
+                ? createVerifier(Environment.XCODE)
+                : verifier;
 
-        if (tokenVerifier) {
+          if (tokenVerifier) {
+            try {
+              const decodedTransaction =
+                await tokenVerifier.verifyAndDecodeTransaction(purchaseToken);
+              const bundleMatches = decodedTransaction.bundleId === bundleId;
+              const productMatches =
+                allowedProductIds.length === 0 ||
+                (!!decodedTransaction.productId &&
+                  allowedProductIds.includes(decodedTransaction.productId));
+              const isValid = bundleMatches && productMatches;
+
+              return res.status(isValid ? 200 : 404).json({
+                isValid,
+                validationSource: "purchaseToken",
+                transactionId:
+                  decodedTransaction.transactionId || transactionId,
+                decodedTransaction: {
+                  bundleId: decodedTransaction.bundleId,
+                  productId: decodedTransaction.productId,
+                  transactionId: decodedTransaction.transactionId,
+                },
+                purchaseData: purchaseToken,
+              });
+            } catch (error) {
+              console.error("Failed to verify App Store purchaseToken", error);
+              return res.status(404).json({
+                isValid: false,
+                validationSource: "purchaseToken",
+                transactionId,
+                message: "Invalid or untrusted purchaseToken.",
+              });
+            }
+          }
+        }
+
+        const transactionHistoryRequest: TransactionHistoryRequest = {
+          sort: Order.ASCENDING,
+          revoked: false,
+          productTypes: [ProductType.AUTO_RENEWABLE],
+        };
+        let response: HistoryResponse | null = null;
+        let signedTransactions: string[] = [];
+        do {
+          const revisionToken = response?.revision ?? null;
+
+          response = await client.getTransactionHistory(
+            transactionId || "",
+            revisionToken,
+            transactionHistoryRequest,
+            GetTransactionHistoryVersion.V2,
+          );
+          if (response.signedTransactions) {
+            signedTransactions = signedTransactions.concat(
+              response.signedTransactions,
+            );
+          }
+        } while (response.hasMore);
+
+        const validatedTransactions: Array<{
+          verified: boolean;
+          bundleMatches: boolean;
+          productMatches: boolean;
+          decodedTransaction?: {
+            bundleId?: string;
+            productId?: string;
+            transactionId?: string;
+          };
+        }> = [];
+
+        for (const signedTransaction of signedTransactions) {
+          if (!verifier) {
+            validatedTransactions.push({
+              verified: false,
+              bundleMatches: false,
+              productMatches: false,
+            });
+            continue;
+          }
+
           try {
             const decodedTransaction =
-              await tokenVerifier.verifyAndDecodeTransaction(purchaseToken);
+              await verifier.verifyAndDecodeTransaction(signedTransaction);
             const bundleMatches = decodedTransaction.bundleId === bundleId;
             const productMatches =
               allowedProductIds.length === 0 ||
               (!!decodedTransaction.productId &&
                 allowedProductIds.includes(decodedTransaction.productId));
-            const isValid = bundleMatches && productMatches;
 
-            return res.status(isValid ? 200 : 404).json({
-              isValid,
-              validationSource: "purchaseToken",
-              transactionId: decodedTransaction.transactionId || transactionId,
+            validatedTransactions.push({
+              verified: true,
+              bundleMatches,
+              productMatches,
               decodedTransaction: {
                 bundleId: decodedTransaction.bundleId,
                 productId: decodedTransaction.productId,
                 transactionId: decodedTransaction.transactionId,
               },
-              purchaseData: purchaseToken,
             });
           } catch (error) {
-            console.error("Failed to verify App Store purchaseToken", error);
-            return res.status(404).json({
-              isValid: false,
-              validationSource: "purchaseToken",
-              transactionId,
-              message: "Invalid or untrusted purchaseToken.",
+            console.error(
+              "Failed to verify App Store transaction signature",
+              error,
+            );
+            validatedTransactions.push({
+              verified: false,
+              bundleMatches: false,
+              productMatches: false,
             });
           }
         }
-      }
 
-      const transactionHistoryRequest: TransactionHistoryRequest = {
-        sort: Order.ASCENDING,
-        revoked: false,
-        productTypes: [ProductType.AUTO_RENEWABLE],
-      };
-      let response: HistoryResponse | null = null;
-      let signedTransactions: string[] = [];
-      do {
-        const revisionToken = response?.revision ?? null;
-
-        response = await client.getTransactionHistory(
-          transactionId || "",
-          revisionToken,
-          transactionHistoryRequest,
-          GetTransactionHistoryVersion.V2,
+        const isValid = validatedTransactions.some(
+          (item) => item.verified && item.bundleMatches && item.productMatches,
         );
-        if (response.signedTransactions) {
-          signedTransactions = signedTransactions.concat(
-            response.signedTransactions,
-          );
-        }
-      } while (response.hasMore);
 
-      const validatedTransactions: Array<{
-        verified: boolean;
-        bundleMatches: boolean;
-        productMatches: boolean;
-        decodedTransaction?: {
-          bundleId?: string;
-          productId?: string;
-          transactionId?: string;
-        };
-      }> = [];
-
-      for (const signedTransaction of signedTransactions) {
-        if (!verifier) {
-          validatedTransactions.push({
-            verified: false,
-            bundleMatches: false,
-            productMatches: false,
-          });
-          continue;
-        }
-
-        try {
-          const decodedTransaction =
-            await verifier.verifyAndDecodeTransaction(signedTransaction);
-          const bundleMatches = decodedTransaction.bundleId === bundleId;
-          const productMatches =
-            allowedProductIds.length === 0 ||
-            (!!decodedTransaction.productId &&
-              allowedProductIds.includes(decodedTransaction.productId));
-
-          validatedTransactions.push({
-            verified: true,
-            bundleMatches,
-            productMatches,
-            decodedTransaction: {
-              bundleId: decodedTransaction.bundleId,
-              productId: decodedTransaction.productId,
-              transactionId: decodedTransaction.transactionId,
-            },
-          });
-        } catch (error) {
-          console.error(
-            "Failed to verify App Store transaction signature",
-            error,
-          );
-          validatedTransactions.push({
-            verified: false,
-            bundleMatches: false,
-            productMatches: false,
-          });
-        }
+        return res.status(isValid ? 200 : 404).json({
+          isValid,
+          validationSource: "transactionHistory",
+          transactionId,
+          verifiedTransactions: validatedTransactions,
+          purchaseData: isValid ? JSON.stringify(signedTransactions) : null,
+        });
+      } catch (err) {
+        console.error("Failed purchase token validation:", err);
+        return res.status(500).send("Internal Server Error");
       }
-
-      const isValid = validatedTransactions.some(
-        (item) => item.verified && item.bundleMatches && item.productMatches,
-      );
-
-      return res.status(isValid ? 200 : 404).json({
-        isValid,
-        validationSource: "transactionHistory",
-        transactionId,
-        verifiedTransactions: validatedTransactions,
-        purchaseData: isValid ? JSON.stringify(signedTransactions) : null,
-      });
-    } catch (err) {
-      console.error("Failed purchase token validation:", err);
-      return res.status(500).send("Internal Server Error");
-    }
-  });
-});
+    });
+  },
+);

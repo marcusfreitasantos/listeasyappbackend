@@ -1,7 +1,8 @@
-import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import * as corsLib from "cors";
 import { FirebaseAuthError } from "firebase-admin/auth";
+import { logger } from "firebase-functions/v2";
+import { onRequest } from "firebase-functions/v2/https";
 
 const db = admin.firestore();
 const cors = corsLib.default({
@@ -62,7 +63,8 @@ export const updateSubscriptionStatusInFirestore = async (
   return subscriptionData;
 };
 
-export const getUserByEmailInFirebaseAuth = functions.https.onRequest(
+export const getUserByEmailInFirebaseAuth = onRequest(
+  { cors: true, invoker: "public" },
   (req, res) => {
     return cors(req, res, async () => {
       try {
@@ -87,7 +89,7 @@ export const getUserByEmailInFirebaseAuth = functions.https.onRequest(
           email: user.email,
         });
       } catch (err) {
-        console.log(err);
+        logger.error(err);
         if (
           err instanceof FirebaseAuthError &&
           err.code === "auth/user-not-found"
@@ -158,55 +160,58 @@ const removeAllUserInvitesFromFirestore = async (
   };
 };
 
-export const deleteUserData = functions.https.onRequest((req, res) => {
-  return cors(req, res, async () => {
-    try {
-      if (req.method !== "POST") {
-        return res.status(405).send("Method Not Allowed");
+export const deleteUserData = onRequest(
+  { cors: true, invoker: "public" },
+  (req, res) => {
+    return cors(req, res, async () => {
+      try {
+        if (req.method !== "POST") {
+          return res.status(405).send("Method Not Allowed");
+        }
+
+        const headerKey = req.headers["x-api-key"] as string;
+
+        if (headerKey !== process.env.API_KEY) {
+          return res.status(401).send("Unathorized");
+        }
+
+        const { userId, purchaseToken } = req.body as {
+          userId: string;
+          purchaseToken: string;
+        };
+
+        const user = await admin.auth().getUser(userId);
+
+        const updatedSubscription: SubscriptionFirestoreDocType | object =
+          await updateSubscriptionStatusInFirestore(purchaseToken, "inactive");
+
+        await removeAllUserListsFromFirestore(userId);
+
+        await removeAllUserInvitesFromFirestore(userId);
+
+        await admin.auth().deleteUser(userId);
+
+        return res.status(200).json({
+          uid: user.uid,
+          displayName: user.displayName,
+          email: user.email,
+          updatedSubscription,
+          message: "User data deletion request received.",
+        });
+      } catch (err) {
+        logger.error(err);
+        if (
+          err instanceof FirebaseAuthError &&
+          err.code === "auth/user-not-found"
+        ) {
+          return res
+            .status(404)
+            .send(
+              "There is no user record corresponding to the provided identifier.",
+            );
+        }
+        return res.status(500).send("Internal Server Error");
       }
-
-      const headerKey = req.headers["x-api-key"] as string;
-
-      if (headerKey !== process.env.API_KEY) {
-        return res.status(401).send("Unathorized");
-      }
-
-      const { userId, purchaseToken } = req.body as {
-        userId: string;
-        purchaseToken: string;
-      };
-
-      const user = await admin.auth().getUser(userId);
-
-      const updatedSubscription: SubscriptionFirestoreDocType | object =
-        await updateSubscriptionStatusInFirestore(purchaseToken, "inactive");
-
-      await removeAllUserListsFromFirestore(userId);
-
-      await removeAllUserInvitesFromFirestore(userId);
-
-      await admin.auth().deleteUser(userId);
-
-      return res.status(200).json({
-        uid: user.uid,
-        displayName: user.displayName,
-        email: user.email,
-        updatedSubscription,
-        message: "User data deletion request received.",
-      });
-    } catch (err) {
-      console.log(err);
-      if (
-        err instanceof FirebaseAuthError &&
-        err.code === "auth/user-not-found"
-      ) {
-        return res
-          .status(404)
-          .send(
-            "There is no user record corresponding to the provided identifier.",
-          );
-      }
-      return res.status(500).send("Internal Server Error");
-    }
-  });
-});
+    });
+  },
+);
