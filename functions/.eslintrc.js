@@ -27,6 +27,7 @@ module.exports = {
   rules: {
     camelcase: "off",
     quotes: ["error", "double"],
+    "quote-props": "off",
     "import/no-unresolved": 0,
     indent: "off",
     "object-curly-spacing": [2, "always"],
