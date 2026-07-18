@@ -101,41 +101,6 @@ const cors = corsLib.default({
   optionsSuccessStatus: 200,
 });
 
-const createAppStoreConnectJwt = (): string => {
-  const currentTime = Math.floor(Date.now() / 1000);
-  const header = {
-    alg: "ES256",
-    kid: process.env.APPLE_STORE_CONNECT_KEY_ID || "",
-    typ: "JWT",
-  };
-  const payload = {
-    iss: issuerId,
-    aud: "appstoreconnect-v1",
-    iat: currentTime,
-    exp: currentTime + 20 * 60,
-    bid: bundleId,
-  };
-
-  const encodedHeader = Buffer.from(JSON.stringify(header)).toString(
-    "base64url",
-  );
-  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
-    "base64url",
-  );
-  const signingInput = `${encodedHeader}.${encodedPayload}`;
-
-  const signer = crypto.createSign("sha256");
-  signer.update(signingInput);
-  signer.end();
-
-  const signature = signer.sign(
-    process.env.APPLE_STORE_CONNECT_PRIVATE_KEY || "",
-  );
-
-  logger.info(payload, "App Store Connect JWT payload");
-  return `${signingInput}.${signature.toString("base64url")}`;
-};
-
 export const validatePurchaseFromAppStore = onRequest(
   { cors: true, invoker: "public" },
   (req, res) => {
@@ -318,48 +283,6 @@ export const handleAppStoreSubscriptions = onRequest(
         });
       } catch (err) {
         logger.error("Failed purchase token validation:", err);
-        return res.status(500).send("Internal Server Error");
-      }
-    });
-  },
-);
-
-export const sendAppStoreTestNotification = onRequest(
-  { cors: true, invoker: "public" },
-  (req, res) => {
-    return cors(req, res, async () => {
-      try {
-        if (req.method !== "POST") {
-          return res.status(405).send("Method Not Allowed");
-        }
-
-        const jwt = createAppStoreConnectJwt();
-
-        const appleResponse = await fetch(
-          "https://api.storekit.apple.com/inApps/v1/notifications/test",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${jwt}`,
-              "Content-Type": "application/json",
-            },
-          },
-        );
-
-        const responseBody = await appleResponse.text();
-
-        logger.info("App Store test notification response", {
-          status: appleResponse.status,
-          body: responseBody,
-        });
-
-        return res.status(appleResponse.ok ? 200 : appleResponse.status).json({
-          success: appleResponse.ok,
-          status: appleResponse.status,
-          data: responseBody,
-        });
-      } catch (err) {
-        logger.error("Failed to send App Store test notification:", err);
         return res.status(500).send("Internal Server Error");
       }
     });
