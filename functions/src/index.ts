@@ -12,3 +12,4 @@ setGlobalOptions({ maxInstances: 20 });
 export * from "./user-module/index.js";
 export * from "./playstore-module/index.js";
 export * from "./appstore-module/index.js";
+export * from "./notification-module/index.js";

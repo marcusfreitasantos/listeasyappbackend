@@ -1,0 +1,38 @@
+[
+  [
+    {
+      "title": "Time to organize your shopping",
+      "message": "Have you checked your list for this week? Open List Easy and organize your shopping.",
+      "language": "en"
+    },
+    {
+      "title": "Hora de organizar as compras",
+      "message": "Já conferiu sua lista desta semana? Abra o List Easy e organize suas compras.",
+      "language": "pt-br"
+    }
+  ],
+  [
+    {
+      "title": "Is your list up to date?",
+      "message": "Take a few minutes to create or update your shopping list for the week.",
+      "language": "en"
+    },
+    {
+      "title": "Sua lista está em dia?",
+      "message": "Separe alguns minutos para criar ou atualizar sua lista de compras da semana.",
+      "language": "pt-br"
+    }
+  ],
+  [
+    {
+      "title": "Ready for shopping?",
+      "message": "Check your list, update what you need, and head out with everything organized.",
+      "language": "en"
+    },
+    {
+      "title": "Tudo pronto para as compras?",
+      "message": "Confira sua lista, atualize o que precisar e vá às compras com tudo organizado.",
+      "language": "pt-br"
+    }
+  ]
+]
