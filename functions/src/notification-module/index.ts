@@ -1,24 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-
 import * as admin from "firebase-admin";
-import * as corsLib from "cors";
 import { Expo, ExpoPushMessage, ExpoPushTicket } from "expo-server-sdk";
 import { logger } from "firebase-functions/v2";
-import { onRequest } from "firebase-functions/v2/https";
-
-const cors = corsLib.default({
-  origin: true,
-  optionsSuccessStatus: 200,
-});
+import { onSchedule } from "firebase-functions/scheduler";
 
 const db = admin.firestore();
 const expo = new Expo();
-
-type SendNotificationRequest = {
-  userUid?: string;
-  userUids?: string[];
-};
 
 type DefaultNotificationVariant = {
   title: string;
@@ -40,12 +28,6 @@ const uniqueStrings = (values: unknown[]): string[] =>
       values.filter((value): value is string => typeof value === "string"),
     ),
   );
-
-const getTargetUserUids = (requestData: SendNotificationRequest): string[] =>
-  uniqueStrings([
-    requestData.userUid,
-    ...(Array.isArray(requestData.userUids) ? requestData.userUids : []),
-  ]);
 
 const getDefaultNotificationMessages = (): DefaultNotificationMessageSet[] => {
   const candidatePaths = [
@@ -142,29 +124,6 @@ const getRandomDefaultMessage = (
   };
 };
 
-const getExpoPushTokenTargetsFromUsers = async (
-  userUids: string[],
-): Promise<TargetPushToken[]> => {
-  const tokenGroups = await Promise.all(
-    userUids.map(async (userUid) => {
-      const userDoc = await db.collection("Users").doc(userUid).get();
-      const userData = userDoc.data() ?? {};
-      const singleToken = userData.expoPushToken;
-      const tokenList = Array.isArray(userData.expoPushTokens)
-        ? userData.expoPushTokens
-        : [];
-
-      return uniqueStrings([singleToken, ...tokenList]).map((pushToken) => ({
-        pushToken,
-        userUid,
-        userLanguage: userData.userLanguage,
-      }));
-    }),
-  );
-
-  return tokenGroups.flat();
-};
-
 const getExpoPushTokenTargetsFromAllUsers = async (): Promise<
   TargetPushToken[]
 > => {
@@ -228,70 +187,36 @@ const sendExpoPushMessages = async (
   return ticketGroups.flat();
 };
 
-export const sendNotification = onRequest(
-  { cors: true, invoker: "public" },
-  (req, res) => {
-    return cors(req, res, async () => {
-      try {
-        if (req.method !== "POST") {
-          return res.status(405).send("Method Not Allowed");
-        }
+export const sendScheduledNotification = onSchedule("0 9 * * 5", async () => {
+  try {
+    const userTargets = await getExpoPushTokenTargetsFromAllUsers();
 
-        const headerKey = req.headers["x-api-key"] as string;
+    const targetsByPushToken = new Map(
+      userTargets.map((target) => [target.pushToken, target]),
+    );
+    const targets = Array.from(targetsByPushToken.values());
 
-        if (headerKey !== process.env.API_KEY) {
-          return res.status(401).send("Unathorized");
-        }
+    if (!targets.length) {
+      throw new Error("Missing target push token or user uid.");
+    }
 
-        const requestData = req.body as SendNotificationRequest;
-        const targetUserUids = getTargetUserUids(requestData);
-        logger.info("targetUserUids", JSON.stringify(targetUserUids));
+    const messages = buildPushMessages(targets);
+    const tickets = await sendExpoPushMessages(messages);
+    const successfulTickets = tickets.filter(
+      (ticket) => ticket.status === "ok",
+    );
+    const failedTickets = tickets.filter((ticket) => ticket.status !== "ok");
 
-        const userTargets =
-          targetUserUids.length > 0
-            ? await getExpoPushTokenTargetsFromUsers(targetUserUids)
-            : await getExpoPushTokenTargetsFromAllUsers();
-
-        const targetsByPushToken = new Map(
-          userTargets.map((target) => [target.pushToken, target]),
-        );
-        const targets = Array.from(targetsByPushToken.values());
-
-        if (!targets.length) {
-          return res.status(400).send("Missing target push token or user uid.");
-        }
-
-        const messages = buildPushMessages(targets);
-        const tickets = await sendExpoPushMessages(messages);
-        const successfulTickets = tickets.filter(
-          (ticket) => ticket.status === "ok",
-        );
-        const failedTickets = tickets.filter(
-          (ticket) => ticket.status !== "ok",
-        );
-
-        if (failedTickets.length) {
-          logger.error(
-            "Some Expo push notifications failed:",
-            JSON.stringify(failedTickets),
-          );
-        }
-
-        return res.status(failedTickets.length ? 400 : 200).json({
-          success: failedTickets.length === 0,
-          sent: successfulTickets.length,
-          failed: failedTickets.length,
-          tickets,
-        });
-      } catch (err) {
-        logger.error("Failed to send notification:", err);
-
-        if (err instanceof Error) {
-          return res.status(400).send(err.message);
-        }
-
-        return res.status(500).send("Internal Server Error");
-      }
-    });
-  },
-);
+    logger.info(
+      failedTickets.length ? 400 : 200,
+      JSON.stringify({
+        success: failedTickets.length === 0,
+        sent: successfulTickets.length,
+        failed: failedTickets.length,
+        tickets,
+      }),
+    );
+  } catch (err) {
+    logger.error("Failed to send notification:", err);
+  }
+});
