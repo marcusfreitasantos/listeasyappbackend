@@ -2,7 +2,7 @@
   "name": "functions",
   "scripts": {
     "lint": "eslint --ext .js,.ts .",
-    "build": "tsc && cp src/notification-module/default-messages.json lib/notification-module/default-messages.json",
+    "build": "tsc && cp src/notification-module/default-messages.json lib/notification-module/default-messages.json && mkdir -p lib/appstore-module/certs && cp src/appstore-module/certs/*.cer lib/appstore-module/certs/",
     "build:watch": "tsc --watch",
     "serve": "NODE_ENV=development bash -c 'npm run build && firebase emulators:start --only functions'",
     "shell": "npm run build && firebase functions:shell",
