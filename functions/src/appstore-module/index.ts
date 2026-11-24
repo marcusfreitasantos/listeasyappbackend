@@ -118,21 +118,26 @@ export const validatePurchaseFromAppStore = onRequest(
             );
             const isValid = bundleMatches && productMatches;
 
-            return res.status(isValid ? 200 : 404).json({
-              isValid,
-              validationSource: "purchaseToken",
-              transactionId: decodedTransaction.transactionId || transactionId,
-              decodedTransaction: decodedPurchaseSummary(decodedTransaction),
-              purchaseData: purchaseToken,
-            });
+            if (isValid || !transactionId) {
+              return res.status(isValid ? 200 : 404).json({
+                isValid,
+                validationSource: "purchaseToken",
+                transactionId:
+                  decodedTransaction.transactionId || transactionId,
+                decodedTransaction: decodedPurchaseSummary(decodedTransaction),
+                purchaseData: purchaseToken,
+              });
+            }
           } catch (error) {
             logger.error("Failed to verify App Store purchaseToken", error);
-            return res.status(404).json({
-              isValid: false,
-              validationSource: "purchaseToken",
-              transactionId,
-              message: "Invalid or untrusted purchaseToken.",
-            });
+            if (!transactionId) {
+              return res.status(404).json({
+                isValid: false,
+                validationSource: "purchaseToken",
+                transactionId,
+                message: "Invalid or untrusted purchaseToken.",
+              });
+            }
           }
         }
 

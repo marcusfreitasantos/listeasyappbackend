@@ -63,12 +63,16 @@ export const syncSubscriptionFromNotification = async ({
     notification.notificationType === NotificationTypeV2.TEST;
 
   return db.runTransaction(async (firestoreTransaction) => {
+    const notifications = db.collection(notificationsCollection);
+
     if (notificationUUID) {
-      const notificationRef = db
-        .collection(notificationsCollection)
-        .doc(notificationUUID);
-      const existing = await firestoreTransaction.get(notificationRef);
-      if (existing.exists) {
+      const [legacyDoc, existing] = await Promise.all([
+        firestoreTransaction.get(notifications.doc(notificationUUID)),
+        firestoreTransaction.get(
+          notifications.where("notificationUUID", "==", notificationUUID).limit(1),
+        ),
+      ]);
+      if (legacyDoc.exists || !existing.empty) {
         return {
           duplicate: true,
           pendingUserLink: false,
@@ -135,15 +139,16 @@ export const syncSubscriptionFromNotification = async ({
     });
 
     const updatedSubscriptionIds: string[] = [];
-    matchedDocs.forEach((doc) => {
+    matchedDocs.forEach((matchedDoc) => {
       firestoreTransaction.update(
-        doc.ref,
+        matchedDoc.ref,
         update as FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData>,
       );
-      updatedSubscriptionIds.push(doc.id);
+      updatedSubscriptionIds.push(matchedDoc.id);
     });
 
     const notificationRecord = withoutUndefined({
+      notificationUUID: notificationUUID ?? null,
       notificationType: notification.notificationType ?? null,
       subtype: notification.subtype ?? null,
       environment: notification.data?.environment ?? null,
@@ -158,9 +163,7 @@ export const syncSubscriptionFromNotification = async ({
       receivedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    const notificationRef = notificationUUID
-      ? db.collection(notificationsCollection).doc(notificationUUID)
-      : db.collection(notificationsCollection).doc();
+    const notificationRef = notifications.doc();
     firestoreTransaction.set(notificationRef, notificationRecord);
 
     return {
